@@ -106,8 +106,8 @@ pub struct MachoFormat {
 
 impl BinaryFormat for MachoFormat {
     fn load(path: &Path) -> anyhow::Result<Self> {
-        let file_data = std::fs::read(path)
-            .map_err(|e| anyhow::anyhow!("failed to read file: {e}"))?;
+        let file_data =
+            std::fs::read(path).map_err(|e| anyhow::anyhow!("failed to read file: {e}"))?;
 
         let mach = goblin::mach::Mach::parse(&file_data)
             .map_err(|e| anyhow::anyhow!("not a valid Mach-O file: {e}"))?;
@@ -155,7 +155,11 @@ impl BinaryFormat for MachoFormat {
 }
 
 impl MachoFormat {
-    fn from_thin(file_data: &[u8], macho: &goblin::mach::MachO<'_>, slice_offset: u64) -> anyhow::Result<Self> {
+    fn from_thin(
+        file_data: &[u8],
+        macho: &goblin::mach::MachO<'_>,
+        slice_offset: u64,
+    ) -> anyhow::Result<Self> {
         for segment in &macho.segments {
             let seg_name = segment
                 .name()
