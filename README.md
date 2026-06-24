@@ -22,12 +22,13 @@ instructions.
 | Platform | Format | Architecture | Patches |
 |---|---|---|---|
 | Windows | PE64 | x86-64 (Intel/AMD) | 3 |
+| Linux | ELF | x86-64 (Intel/AMD) | 3 |
 | macOS | Mach-O (fat) | ARM64 (Apple Silicon) | 2 |
 
-The struct layout of `MinecraftAccount` is identical on both platforms. The patch
-strategy differs because the ARM64 compiler inlines `decideLaunchMode` into
-`executeTask` and emits separate `ownsMinecraft` checks per code path, requiring
-a convergence-point redirect instead of individual branch patches.
+The struct layout of `MinecraftAccount` is identical across all platforms. On
+macOS ARM64 the compiler inlines `decideLaunchMode` into `executeTask` and emits
+separate `ownsMinecraft` checks per code path, requiring a convergence-point
+redirect instead of individual branch patches.
 
 ## Usage
 
@@ -72,6 +73,14 @@ If no target is specified, the patcher searches:
 3. `~/.local/share/PrismLauncher/prismlauncher`
 4. `./prismlauncher`
 
+**Linux:**
+1. `/var/lib/flatpak/app/org.prismlauncher.PrismLauncher/current/active/files/bin/prismrun` (Flatpak)
+2. `~/.local/share/flatpak/app/org.prismlauncher.PrismLauncher/current/active/files/bin/prismrun` (user Flatpak)
+3. `/usr/bin/prismlauncher`
+4. `/usr/local/bin/prismlauncher`
+5. `/app/bin/prismrun`
+6. `./prismrun`
+
 ## macOS Code Signing
 
 After patching, the existing code signature is invalid. The patcher automatically
@@ -88,16 +97,6 @@ codesign -s - <binary>
 cargo build --release
 ```
 
-Cross-compilation works for both targets:
-
-```
-# macOS ARM64
-cargo build --release --target aarch64-apple-darwin
-
-# Windows x86-64 (from macOS with cross toolchain)
-cargo build --release --target x86_64-pc-windows-msvc
-```
-
 ## Patching Details
 
 ### x86-64 Windows (3 patches)
@@ -107,6 +106,19 @@ cargo build --release --target x86_64-pc-windows-msvc
 | 1 | `anyAccountIsValid()` entry | `mov al,1; ret` |
 | 2 | Type check branch in `decideLaunchMode` | NOP the `jz` (6 bytes) |
 | 3 | OwnsMinecraft check in `decideLaunchMode` | `jnz` to `jmp` (always pass) |
+
+### Linux ELF x86-64 (3 patches)
+
+| Patch | Target | Change |
+|---|---|---|
+| 1 | `anyAccountIsValid()` entry | `mov al,1; ret` |
+| 2 | Type check branch in `decideLaunchMode` | NOP the `jz` (6 bytes) |
+| 3 | OwnsMinecraft check in `decideLaunchMode` | NOP the `jz` (6 bytes) |
+
+The Linux binary uses the same strategy as Windows: two 6-byte conditional jump
+NOPs in `decideLaunchMode` to bypass both the type check (which redirects offline
+accounts to MSA-only refresh logic) and the `ownsMinecraft` check (which rejects
+accounts that don't own the game).
 
 ### ARM64 macOS (2 patches)
 

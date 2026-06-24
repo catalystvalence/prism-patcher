@@ -60,6 +60,29 @@ const RULES_ARM64: &[PatchRule] = &[
     },
 ];
 
+// Linux ELF x86-64 rules
+
+const RULES_LINUX_X86_64: &[PatchRule] = &[
+    PatchRule {
+        name: "anyAccountIsValid unconditional return",
+        signature: "f3 0f 1e fa 55 48 89 e5 41 55 4c 8d 6f 50 41 54 49 89 fc",
+        offset_from_match: 0,
+        patch_kind: PatchKind::Fixed(&[0xB0, 0x01, 0xC3]),
+    },
+    PatchRule {
+        name: "decideLaunchMode type check (Offline -> MSA path)",
+        signature: "48 8b 83 e0 00 00 00 83 78 20 01 0f 84 ?? ?? ?? ?? 80 b8 38 02 00 00 00 0f 84 ?? ?? ?? ??",
+        offset_from_match: 11,
+        patch_kind: PatchKind::Fixed(&[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]),
+    },
+    PatchRule {
+        name: "decideLaunchMode ownsMinecraft check (bypass)",
+        signature: "48 8b 83 e0 00 00 00 83 78 20 01 0f 84 ?? ?? ?? ?? 80 b8 38 02 00 00 00 0f 84 ?? ?? ?? ??",
+        offset_from_match: 24,
+        patch_kind: PatchKind::Fixed(&[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]),
+    },
+];
+
 #[derive(Parser)]
 #[command(
     name = "prism-patcher",
@@ -98,6 +121,8 @@ fn detect_format(path: &PathBuf) -> anyhow::Result<Box<dyn BinaryFormat>> {
     match &magic {
         // PE
         b"MZ\x90\x00" => Ok(Box::new(format::PeFormat::load(path)?)),
+        // ELF
+        [0x7f, 0x45, 0x4c, 0x46] => Ok(Box::new(format::ElfFormat::load(path)?)),
         // Mach-O thin (LE + BE) + fat
         [0xcf, 0xfa, 0xed, 0xfe]
         | [0xce, 0xfa, 0xed, 0xfe]
@@ -105,7 +130,7 @@ fn detect_format(path: &PathBuf) -> anyhow::Result<Box<dyn BinaryFormat>> {
         | [0xfe, 0xed, 0xfa, 0xce]
         | [0xca, 0xfe, 0xba, 0xbe] => Ok(Box::new(format::MachoFormat::load(path)?)),
         _ => anyhow::bail!(
-            "unknown binary format (magic: {:02X?}); expected PE or Mach-O",
+            "unknown binary format (magic: {:02X?}); expected PE, ELF, or Mach-O",
             &magic
         ),
     }
@@ -117,6 +142,24 @@ fn find_installation() -> anyhow::Result<PathBuf> {
             PathBuf::from("/Applications/Prism Launcher.app/Contents/MacOS/prismlauncher"),
             dirs_fallback().join("Applications/Prism Launcher.app/Contents/MacOS/prismlauncher"),
             dirs_fallback().join(".local/share/PrismLauncher/prismlauncher"),
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join("prismlauncher"),
+        ]
+    } else if cfg!(target_os = "linux") {
+        vec![
+            // Flatpak installation
+            PathBuf::from("/var/lib/flatpak/app/org.prismlauncher.PrismLauncher/current/active/files/bin/prismrun"),
+            // Alternative Flatpak paths
+            dirs_fallback().join(".local/share/flatpak/app/org.prismlauncher.PrismLauncher/current/active/files/bin/prismrun"),
+            // AppImage or system-installed (I haven't tested these yet)
+            PathBuf::from("/usr/bin/prismlauncher"),
+            PathBuf::from("/usr/local/bin/prismlauncher"),
+            PathBuf::from("/app/bin/prismrun"),
+            // Current directory
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join("prismrun"),
             std::env::current_dir()
                 .unwrap_or_default()
                 .join("prismlauncher"),
@@ -226,6 +269,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 
     let rules: &[PatchRule] = if arch.contains("ARM64") || arch.contains("AArch64") {
         RULES_ARM64
+    } else if arch.contains("ELF") {
+        RULES_LINUX_X86_64
     } else if arch.contains("x86-64") || arch.contains("PE64") {
         RULES_X86_64
     } else {

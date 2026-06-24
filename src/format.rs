@@ -95,6 +95,70 @@ impl BinaryFormat for PeFormat {
     }
 }
 
+// ── ELF (x86-64) via goblin ────────────────────────────────────────
+
+pub struct ElfFormat {
+    #[allow(dead_code)]
+    file_data: Vec<u8>,
+    text: SectionInfo,
+}
+
+impl BinaryFormat for ElfFormat {
+    fn load(path: &Path) -> anyhow::Result<Self> {
+        let file_data =
+            std::fs::read(path).map_err(|e| anyhow::anyhow!("failed to read file: {e}"))?;
+
+        let elf = goblin::elf::Elf::parse(&file_data)
+            .map_err(|e| anyhow::anyhow!("not a valid ELF file: {e}"))?;
+
+        let text_shdr = elf
+            .section_headers
+            .iter()
+            .find(|sh| {
+                elf.shdr_strtab
+                    .get_at(sh.sh_name)
+                    .map(|name| name == ".text")
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| anyhow::anyhow!(".text section not found in ELF"))?;
+
+        let va = text_shdr.sh_addr;
+        let file_offset = text_shdr.sh_offset;
+        let size = text_shdr.sh_size;
+
+        let file_start = text_shdr.sh_offset as usize;
+        let file_size = text_shdr.sh_size as usize;
+        let file_end = file_start + file_size;
+
+        if file_end > file_data.len() {
+            anyhow::bail!(
+                ".text section bounds ({file_end}) exceed file size ({})",
+                file_data.len()
+            );
+        }
+
+        let raw_data = file_data[file_start..file_end].to_vec();
+
+        Ok(Self {
+            file_data,
+            text: SectionInfo {
+                va,
+                file_offset,
+                size,
+                raw_data,
+            },
+        })
+    }
+
+    fn arch_name(&self) -> &'static str {
+        "ELF x86-64"
+    }
+
+    fn text_section(&self) -> &SectionInfo {
+        &self.text
+    }
+}
+
 // ── Mach-O (fat + thin, ARM64 / x86-64) via goblin ────────────────
 
 pub struct MachoFormat {
